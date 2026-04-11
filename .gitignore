@@ -1,0 +1,85 @@
+# .gitignore - ignore common data and environment files
+# To untrack files already in git:
+# git rm -r --cached <path> && git commit -m "Remove data"
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data / databases / exports
+/data/
+/datas/
+/datasets/
+/db/
+/database/
+/sql/
+/dump/
+*.sqlite
+*.sqlite3
+*.db
+*.sql
+*.dump
+*.bak
+*.csv
+*.tsv
+*.parquet
+*.ndjson
+*.jsonl
+*.arrow
+*.feather
+
+# Environments / secrets
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Logs / temp
+*.log
+logs/
+tmp/
+temp/
+.cache/
+.ipynb_checkpoints
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Common language/tool outputs
+node_modules/
+dist/
+build/
+out/
+target/
+coverage/
+*.egg-info/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+*.onnx
+*.ckpt
+*.tflite
+/models/
+/checkpoints/
+/hf_cache/
+/huggingface_cache/
+/wandb/
+/mlruns/
+/runs/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+
+# Other
+*.class
+__pycache__/
+*.py[cod]
+*.swp
+outputs/

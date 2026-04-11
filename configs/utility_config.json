@@ -1,0 +1,27 @@
+{
+  "profiles": {
+    "cautious_novice": {
+      "reward_correct": 1.0,
+      "penalty_wrong": -5.0,
+      "penalty_severe": -20.0,
+      "penalty_escalate": -0.6
+    },
+    "balanced_user": {
+      "reward_correct": 1.0,
+      "penalty_wrong": -2.5,
+      "penalty_severe": -12.0,
+      "penalty_escalate": -0.4
+    },
+    "expert_fast": {
+      "reward_correct": 1.0,
+      "penalty_wrong": -1.2,
+      "penalty_severe": -6.0,
+      "penalty_escalate": -0.2
+    }
+  },
+  "domain_risk_multiplier": {
+    "general": 1.0,
+    "finance": 1.6,
+    "medical": 2.0
+  }
+}

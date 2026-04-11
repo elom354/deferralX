@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deferralx"
+version = "0.1.0"
+description = "User- and task-adaptive deferral experiments for LLM human oversight"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "DeferralX" }]
+license = { text = "MIT" }
+
+[project.scripts]
+deferralx = "deferralx.run:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
