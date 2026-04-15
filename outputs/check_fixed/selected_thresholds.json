@@ -1,0 +1,25 @@
+{
+  "global_threshold": 0.62,
+  "domain_threshold": {
+    "general": 0.62,
+    "finance": 0.62,
+    "medical": 0.51
+  },
+  "profile_threshold": {
+    "balanced_user": 0.67,
+    "expert_fast": 0.51,
+    "cautious_novice": 0.56
+  },
+  "domain_profile_threshold": {
+    "general::balanced_user": 0.67,
+    "finance::balanced_user": 0.51,
+    "finance::expert_fast": 0.62,
+    "medical::balanced_user": 0.39,
+    "medical::expert_fast": 0.51,
+    "general::cautious_novice": 0.51,
+    "medical::cautious_novice": 0.34,
+    "general::expert_fast": 0.62,
+    "finance::cautious_novice": 0.56
+  },
+  "rtr_style_threshold_router": 0.6
+}

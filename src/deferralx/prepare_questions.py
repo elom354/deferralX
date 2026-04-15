@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import random
 from pathlib import Path
 
 
@@ -52,9 +53,27 @@ def main() -> None:
         choices=["general", "finance", "medical"],
     )
     parser.add_argument(
+        "--domain-mode",
+        default="fixed",
+        choices=["fixed", "mmlu_subject"],
+        help="Domain assignment mode. mmlu_subject maps MMLU `subject` to {general,finance,medical}.",
+    )
+    parser.add_argument(
         "--default-profile",
         default="balanced_user",
         choices=["cautious_novice", "balanced_user", "expert_fast"],
+    )
+    parser.add_argument(
+        "--profile-mode",
+        default="fixed",
+        choices=["fixed", "cycle", "random"],
+        help="How to assign user_profile in output rows.",
+    )
+    parser.add_argument(
+        "--profile-seed",
+        type=int,
+        default=42,
+        help="Random seed used when --profile-mode=random.",
     )
     parser.add_argument(
         "--severe-if-wrong",
@@ -62,6 +81,12 @@ def main() -> None:
         default=1,
         choices=[0, 1],
         help="Default severe_if_wrong label for exported rows.",
+    )
+    parser.add_argument(
+        "--severe-mode",
+        default="fixed",
+        choices=["fixed", "by_domain"],
+        help="Severity assignment mode. by_domain sets severe=1 for finance/medical and 0 for general.",
     )
     parser.add_argument(
         "--limit",
@@ -119,6 +144,8 @@ def main() -> None:
         )
 
         n_written = 0
+        rng = random.Random(args.profile_seed)
+        cycle_profiles = ["cautious_novice", "balanced_user", "expert_fast"]
         for i, row in enumerate(ds):
             if args.limit > 0 and n_written >= args.limit:
                 break
@@ -149,14 +176,31 @@ def main() -> None:
             else:
                 example_id = f"{args.domain}_{i:06d}"
 
+            user_profile = _select_profile(
+                mode=args.profile_mode,
+                default_profile=args.default_profile,
+                cycle_profiles=cycle_profiles,
+                written_index=n_written,
+                rng=rng,
+            )
+            domain = _select_domain(
+                mode=args.domain_mode,
+                default_domain=args.domain,
+                row=row,
+            )
+
             writer.writerow(
                 [
                     example_id,
-                    args.domain,
-                    args.default_profile,
+                    domain,
+                    user_profile,
                     prompt,
                     reference_answer,
-                    args.severe_if_wrong,
+                    _select_severity(
+                        mode=args.severe_mode,
+                        default_value=args.severe_if_wrong,
+                        domain=domain,
+                    ),
                 ]
             )
             n_written += 1
@@ -207,6 +251,59 @@ def _answer_from_index(answer_value, choices: list[str]) -> str:
     if idx < 0 or idx >= len(choices):
         return _safe_text(answer_value)
     return _safe_text(choices[idx])
+
+
+def _select_profile(
+    mode: str,
+    default_profile: str,
+    cycle_profiles: list[str],
+    written_index: int,
+    rng: random.Random,
+) -> str:
+    if mode == "fixed":
+        return default_profile
+    if mode == "cycle":
+        return cycle_profiles[written_index % len(cycle_profiles)]
+    # random mode
+    return rng.choice(cycle_profiles)
+
+
+def _select_domain(mode: str, default_domain: str, row) -> str:
+    if mode == "fixed":
+        return default_domain
+
+    subject = _safe_text(row.get("subject", "")).lower()
+    finance_subjects = {
+        "econometrics",
+        "high_school_macroeconomics",
+        "high_school_microeconomics",
+        "professional_accounting",
+        "business_ethics",
+        "management",
+        "marketing",
+    }
+    medical_subjects = {
+        "anatomy",
+        "clinical_knowledge",
+        "college_medicine",
+        "human_aging",
+        "medical_genetics",
+        "nutrition",
+        "professional_medicine",
+        "virology",
+    }
+
+    if subject in finance_subjects:
+        return "finance"
+    if subject in medical_subjects:
+        return "medical"
+    return "general"
+
+
+def _select_severity(mode: str, default_value: int, domain: str) -> int:
+    if mode == "fixed":
+        return int(default_value)
+    return 0 if domain == "general" else 1
 
 
 if __name__ == "__main__":

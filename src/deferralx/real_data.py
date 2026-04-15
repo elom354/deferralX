@@ -238,14 +238,41 @@ def collect_real_records(
     fast_latency_s: float,
     system_prompt: str,
     audit_path: str | Path | None,
+    output_path: str | Path | None = None,
+    append_output: bool = False,
+    use_confidence_pass: bool = True,
 ) -> list[Record]:
     records: list[Record] = []
 
     audit_file = None
+    output_file = None
+    output_writer = None
     if audit_path is not None:
         p = Path(audit_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        audit_file = p.open("w", encoding="utf-8")
+        audit_mode = "a" if append_output and p.exists() else "w"
+        audit_file = p.open(audit_mode, encoding="utf-8")
+    if output_path is not None:
+        p = Path(output_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        exists = p.exists()
+        mode = "a" if append_output and exists else "w"
+        output_file = p.open(mode, encoding="utf-8", newline="")
+        output_writer = csv.writer(output_file)
+        if mode == "w":
+            output_writer.writerow(
+                [
+                    "example_id",
+                    "domain",
+                    "user_profile",
+                    "correctness",
+                    "severe_if_wrong",
+                    "p_internal",
+                    "p_verbal",
+                    "agreement",
+                    "response_speed",
+                ]
+            )
 
     try:
         total = len(questions)
@@ -267,14 +294,18 @@ def collect_real_records(
             answer_text = _extract_text(answer_resp, 0)
             p_internal = _extract_first_token_prob(answer_resp, 0)
 
-            confidence_text = _ask_confidence(
-                client=client,
-                model=model,
-                question=q.prompt,
-                answer=answer_text,
-                max_tokens=80,
-            )
-            p_verbal = _parse_confidence_number(confidence_text)
+            confidence_text = "skipped"
+            if use_confidence_pass:
+                confidence_text = _ask_confidence(
+                    client=client,
+                    model=model,
+                    question=q.prompt,
+                    answer=answer_text,
+                    max_tokens=80,
+                )
+                p_verbal = _parse_confidence_number(confidence_text)
+            else:
+                p_verbal = p_internal if p_internal is not None else 0.5
 
             agreement = _compute_agreement(
                 client=client,
@@ -306,6 +337,21 @@ def collect_real_records(
                 response_speed=response_speed,
             )
             records.append(record)
+            if output_writer is not None:
+                output_writer.writerow(
+                    [
+                        record.example_id,
+                        record.domain,
+                        record.user_profile,
+                        record.correctness,
+                        record.severe_if_wrong,
+                        f"{record.p_internal:.6f}",
+                        f"{record.p_verbal:.6f}",
+                        f"{record.agreement:.6f}",
+                        record.response_speed,
+                    ]
+                )
+                output_file.flush()
 
             if audit_file is not None:
                 audit_payload = {
@@ -331,6 +377,8 @@ def collect_real_records(
     finally:
         if audit_file is not None:
             audit_file.close()
+        if output_file is not None:
+            output_file.close()
 
     return records
 

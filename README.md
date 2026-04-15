@@ -71,8 +71,9 @@ PYTHONPATH=src python3 -m deferralx.prepare_questions \
   --answer-col answer \
   --answer-is-index \
   --domain general \
-  --default-profile balanced_user \
-  --severe-if-wrong 0
+  --domain-mode mmlu_subject \
+  --profile-mode cycle \
+  --severe-mode by_domain
 ```
 
 FinanceBench example:
@@ -104,6 +105,12 @@ PYTHONPATH=src python3 -m deferralx.prepare_questions \
 ```
 
 Merge files into a single questions CSV with one header.
+
+```bash
+PYTHONPATH=src python3 -m deferralx.merge_questions \
+  --inputs data/mmlu_questions.csv data/finance_questions.csv data/medqa_questions.csv \
+  --output data/article_questions.csv
+```
 
 ### 2) Collect logs with a real LLM (API mode)
 
@@ -138,6 +145,24 @@ PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
   --model-id Qwen/Qwen2.5-0.5B-Instruct \
   --device auto
 ```
+
+Fast + interruption-safe variant (recommended):
+
+```bash
+PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
+  --questions data/mmlu_questions_500.csv \
+  --output data/real_llm_logs_local.csv \
+  --audit-jsonl outputs/audit/real_collection_local_hf.jsonl \
+  --model-id Qwen/Qwen2.5-0.5B-Instruct \
+  --device auto \
+  --agreement-samples 1 \
+  --skip-confidence-pass \
+  --max-tokens 96 \
+  --resume \
+  --max-examples 100
+```
+
+If a run stops mid-way, rerun the exact same command with `--resume`.
 
 CPU-friendly model suggestions:
 - `Qwen/Qwen2.5-0.5B-Instruct`

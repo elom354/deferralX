@@ -26,7 +26,6 @@ from deferralx.real_data import (
     build_local_hf_client,
     collect_real_records,
     load_question_records,
-    save_real_records,
 )
 from deferralx.schema import load_records, stratified_split
 from deferralx.synthetic import generate_synthetic_csv
@@ -68,6 +67,9 @@ def main() -> None:
     collect.add_argument("--agreement-samples", type=int, default=3)
     collect.add_argument("--agreement-temperature", type=float, default=0.7)
     collect.add_argument("--fast-latency-s", type=float, default=4.0)
+    collect.add_argument("--resume", action="store_true")
+    collect.add_argument("--max-examples", type=int, default=0)
+    collect.add_argument("--skip-confidence-pass", action="store_true")
     collect.add_argument(
         "--system-prompt",
         default="You are a precise assistant. Provide your best concise answer.",
@@ -97,6 +99,9 @@ def main() -> None:
     local_hf.add_argument("--agreement-samples", type=int, default=3)
     local_hf.add_argument("--agreement-temperature", type=float, default=0.7)
     local_hf.add_argument("--fast-latency-s", type=float, default=4.0)
+    local_hf.add_argument("--resume", action="store_true")
+    local_hf.add_argument("--max-examples", type=int, default=0)
+    local_hf.add_argument("--skip-confidence-pass", action="store_true")
     local_hf.add_argument(
         "--system-prompt",
         default="You are a precise assistant. Provide your best concise answer.",
@@ -121,12 +126,21 @@ def main() -> None:
 
     if args.cmd == "collect-real":
         questions = load_question_records(args.questions)
+        questions = _filter_questions_for_resume(
+            questions=questions,
+            output_path=args.output,
+            resume=args.resume,
+            max_examples=args.max_examples,
+        )
+        if not questions:
+            print("No remaining questions to process.")
+            return
         client = build_client_from_env(
             api_key_env=args.api_key_env,
             base_url=args.base_url,
             timeout_s=args.timeout_s,
         )
-        records = collect_real_records(
+        collect_real_records(
             questions=questions,
             client=client,
             model=args.model,
@@ -136,19 +150,30 @@ def main() -> None:
             fast_latency_s=args.fast_latency_s,
             system_prompt=args.system_prompt,
             audit_path=args.audit_jsonl,
+            output_path=args.output,
+            append_output=args.resume,
+            use_confidence_pass=(not args.skip_confidence_pass),
         )
-        save_real_records(args.output, records)
         print(f"Real LLM records written to: {args.output}")
         return
 
     if args.cmd == "collect-local-hf":
         questions = load_question_records(args.questions)
+        questions = _filter_questions_for_resume(
+            questions=questions,
+            output_path=args.output,
+            resume=args.resume,
+            max_examples=args.max_examples,
+        )
+        if not questions:
+            print("No remaining questions to process.")
+            return
         client = build_local_hf_client(
             model_id_or_path=args.model_id,
             device=args.device,
             use_fp16=args.use_fp16,
         )
-        records = collect_real_records(
+        collect_real_records(
             questions=questions,
             client=client,
             model=args.model_id,
@@ -158,8 +183,10 @@ def main() -> None:
             fast_latency_s=args.fast_latency_s,
             system_prompt=args.system_prompt,
             audit_path=args.audit_jsonl,
+            output_path=args.output,
+            append_output=args.resume,
+            use_confidence_pass=(not args.skip_confidence_pass),
         )
-        save_real_records(args.output, records)
         print(f"Local HF LLM records written to: {args.output}")
         return
 
@@ -367,6 +394,37 @@ def run_multiseed(
 
     print("Multiseed experiment completed.")
     print(f"Results written to: {root}")
+
+
+def _filter_questions_for_resume(questions, output_path: str, resume: bool, max_examples: int):
+    remaining = questions
+    if resume:
+        done_ids = _read_existing_example_ids(output_path)
+        remaining = [q for q in questions if q.example_id not in done_ids]
+        print(
+            f"Resume mode: {len(done_ids)} already processed, {len(remaining)} remaining."
+        )
+    if max_examples > 0:
+        remaining = remaining[:max_examples]
+        print(f"Limiting run to first {len(remaining)} questions.")
+    return remaining
+
+
+def _read_existing_example_ids(path: str | Path) -> set[str]:
+    p = Path(path)
+    if not p.exists():
+        return set()
+
+    ids: set[str] = set()
+    with p.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None or "example_id" not in reader.fieldnames:
+            return set()
+        for row in reader:
+            ex_id = str(row.get("example_id", "")).strip()
+            if ex_id:
+                ids.add(ex_id)
+    return ids
 
 
 def _read_overall_metrics(path: Path) -> list[dict[str, float]]:

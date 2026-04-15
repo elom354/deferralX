@@ -82,4 +82,4 @@ coverage/
 __pycache__/
 *.py[cod]
 *.swp
-outputs/
+# outputs/
