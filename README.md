@@ -70,10 +70,13 @@ PYTHONPATH=src python3 -m deferralx.prepare_questions \
   --choices-col choices \
   --answer-col answer \
   --answer-is-index \
+  --shuffle \
+  --sample-seed 42 \
   --domain general \
   --domain-mode mmlu_subject \
   --profile-mode cycle \
-  --severe-mode by_domain
+  --severe-mode by_domain \
+  --limit 600
 ```
 
 FinanceBench example:
@@ -150,14 +153,14 @@ Fast + interruption-safe variant (recommended):
 
 ```bash
 PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
-  --questions data/mmlu_questions_500.csv \
+  --questions data/mmlu_questions.csv \
   --output data/real_llm_logs_local.csv \
   --audit-jsonl outputs/audit/real_collection_local_hf.jsonl \
   --model-id Qwen/Qwen2.5-0.5B-Instruct \
   --device auto \
   --agreement-samples 1 \
   --skip-confidence-pass \
-  --max-tokens 96 \
+  --max-tokens 12 \
   --resume \
   --max-examples 100
 ```

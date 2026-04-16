@@ -95,6 +95,17 @@ def main() -> None:
         help="Optional max number of rows (0 = all)",
     )
     parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="Shuffle dataset rows before export (recommended when using --limit).",
+    )
+    parser.add_argument(
+        "--sample-seed",
+        type=int,
+        default=42,
+        help="Seed used for dataset shuffling when --shuffle is enabled.",
+    )
+    parser.add_argument(
         "--print-columns",
         action="store_true",
         help="Print dataset columns and exit.",
@@ -126,6 +137,9 @@ def main() -> None:
     if args.print_columns:
         print("Columns:", list(ds.column_names))
         return
+
+    if args.shuffle:
+        ds = ds.shuffle(seed=args.sample_seed)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

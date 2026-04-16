@@ -176,23 +176,32 @@ class LocalHFClient:
             generate_kwargs["attention_mask"] = attention_mask
         if do_sample:
             generate_kwargs["temperature"] = max(temperature, 1e-3)
+        if want_logprobs:
+            generate_kwargs["return_dict_in_generate"] = True
+            generate_kwargs["output_scores"] = True
 
         with torch.no_grad():
-            output_ids = self.model.generate(**generate_kwargs)
+            generated = self.model.generate(**generate_kwargs)
+
+        if want_logprobs:
+            output_ids = generated.sequences
+        else:
+            output_ids = generated
 
         new_tokens = output_ids[0, input_ids.shape[1] :]
         answer_text = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
         p_first: float | None = None
         if want_logprobs and new_tokens.numel() > 0:
-            with torch.no_grad():
-                logits = self.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                ).logits[:, -1, :]
-                probs = torch.softmax(logits, dim=-1)
-                token_id = int(new_tokens[0].item())
-                p_first = float(probs[0, token_id].item())
+            token_probs: list[float] = []
+            for step, step_scores in enumerate(generated.scores):
+                if step >= new_tokens.numel():
+                    break
+                token_id = int(new_tokens[step].item())
+                probs = torch.softmax(step_scores[0], dim=-1)
+                token_probs.append(float(probs[token_id].item()))
+            if token_probs:
+                p_first = sum(token_probs) / len(token_probs)
 
         return answer_text, p_first
 
@@ -277,12 +286,13 @@ def collect_real_records(
     try:
         total = len(questions)
         for i, q in enumerate(questions, start=1):
+            answer_prompt = _format_user_prompt_for_answer(q.prompt)
             start = time.time()
             answer_resp = client.chat(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": q.prompt},
+                    {"role": "user", "content": answer_prompt},
                 ],
                 temperature=0.0,
                 max_tokens=max_tokens,
@@ -310,19 +320,20 @@ def collect_real_records(
             agreement = _compute_agreement(
                 client=client,
                 model=model,
-                question=q.prompt,
+                question=answer_prompt,
                 reference_answer=answer_text,
                 samples=agreement_samples,
                 temperature=agreement_temperature,
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
+                matching_prompt=q.prompt,
             )
 
             if p_internal is None:
                 # Fallback remains grounded in model outputs, not synthetic labels.
                 p_internal = _clamp(0.5 * p_verbal + 0.5 * agreement)
 
-            correctness = 1 if _answers_match(answer_text, q.reference_answer) else 0
+            correctness = 1 if _answers_match(answer_text, q.reference_answer, prompt=q.prompt) else 0
             response_speed = "fast" if latency_s <= fast_latency_s else "careful"
 
             record = Record(
@@ -461,6 +472,7 @@ def _compute_agreement(
     temperature: float,
     max_tokens: int,
     system_prompt: str,
+    matching_prompt: str | None = None,
 ) -> float:
     if samples <= 0:
         return 0.0
@@ -478,11 +490,10 @@ def _compute_agreement(
     )
 
     matches = 0
-    ref_norm = _normalize_answer(reference_answer)
     choices = resp.get("choices", [])
     for j in range(min(samples, len(choices))):
         text = _extract_text(resp, j)
-        if _normalize_answer(text) == ref_norm:
+        if _answers_match(text, reference_answer, prompt=matching_prompt):
             matches += 1
     return matches / float(samples)
 
@@ -531,11 +542,20 @@ def _parse_confidence_number(text: str) -> float:
     return 0.5
 
 
-def _answers_match(prediction: str, reference: str) -> bool:
-    pred_choice = _extract_option(prediction)
-    ref_choice = _extract_option(reference)
-    if pred_choice is not None and ref_choice is not None:
-        return pred_choice == ref_choice
+def _answers_match(prediction: str, reference: str, prompt: str | None = None) -> bool:
+    option_map = _extract_options_map(prompt or "")
+    if option_map:
+        pred_choice = _extract_option_from_text(prediction)
+        if pred_choice is None:
+            pred_choice = _infer_choice_from_option_text(prediction, option_map)
+        ref_choice = _extract_reference_choice(reference, option_map)
+        if pred_choice is not None and ref_choice is not None:
+            return pred_choice == ref_choice
+    else:
+        pred_choice = _extract_option_from_text(prediction)
+        ref_choice = _extract_option_from_text(reference)
+        if pred_choice is not None and ref_choice is not None:
+            return pred_choice == ref_choice
 
     pred_num = _extract_number(prediction)
     ref_num = _extract_number(reference)
@@ -554,11 +574,69 @@ def _answers_match(prediction: str, reference: str) -> bool:
     return False
 
 
-def _extract_option(text: str) -> str | None:
-    m = re.search(r"\b([A-E])\b", text.upper())
-    if m:
-        return m.group(1)
+def _extract_option_from_text(text: str) -> str | None:
+    patterns = [
+        r"(?:final answer|answer(?:\s+is)?)\s*[:\-]?\s*\(?([A-H])\)?\b",
+        r"^\s*\(?([A-H])\)?\s*$",
+        r"^\s*([A-H])[\.\)]\s*",
+        r"\boption\s*\(?([A-H])\)?\b",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+        if m:
+            return m.group(1).upper()
     return None
+
+
+def _extract_options_map(prompt: str) -> dict[str, str]:
+    options: dict[str, str] = {}
+    for line in prompt.splitlines():
+        m = re.match(r"^\s*([A-H])[\.\)]\s*(.+?)\s*$", line, flags=re.IGNORECASE)
+        if not m:
+            continue
+        label = m.group(1).upper()
+        value = m.group(2).strip()
+        if value:
+            options[label] = value
+    return options
+
+
+def _extract_reference_choice(reference: str, option_map: dict[str, str]) -> str | None:
+    letter = _extract_option_from_text(reference)
+    if letter is not None and letter in option_map:
+        return letter
+
+    ref_norm = _normalize_answer(reference)
+    for label, text in option_map.items():
+        if _normalize_answer(text) == ref_norm:
+            return label
+    return None
+
+
+def _infer_choice_from_option_text(text: str, option_map: dict[str, str]) -> str | None:
+    pred_norm = _normalize_answer(text)
+    if not pred_norm:
+        return None
+
+    matches: list[str] = []
+    for label, option_text in option_map.items():
+        option_norm = _normalize_answer(option_text)
+        if option_norm and option_norm in pred_norm:
+            matches.append(label)
+
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _format_user_prompt_for_answer(prompt: str) -> str:
+    if _extract_options_map(prompt):
+        return (
+            f"{prompt}\n\n"
+            "Return only the best option letter (A, B, C, D, ...). "
+            "Do not include explanation."
+        )
+    return prompt
 
 
 def _extract_number(text: str) -> float | None:
