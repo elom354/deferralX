@@ -195,6 +195,37 @@ PYTHONPATH=src python3 -m deferralx.run run \
   --bootstrap 400
 ```
 
+### 3b) Multi-seed as primary result (recommended for paper)
+Run 5+ seeds and aggregate:
+
+```bash
+PYTHONPATH=src python3 -m deferralx.run run-multiseed \
+  --input data/real_llm_logs.csv \
+  --outdir outputs/multiseed_model_a \
+  --utility-config configs/utility_config.json \
+  --test-ratio 0.30 \
+  --seeds 7,11,17,23,31 \
+  --bootstrap 120
+```
+
+Generate the publication-ready section/table/curve:
+
+```bash
+PYTHONPATH=src python3 -m deferralx.run report-multiseed \
+  --multiseed-dir outputs/multiseed_model_a \
+  --label model_a \
+  --outdir outputs/multiseed_model_a/report
+```
+
+### 3c) Compare two models with the same protocol
+After running the same multi-seed protocol for a second model:
+
+```bash
+PYTHONPATH=src python3 -m deferralx.run compare-models \
+  --runs model_a=outputs/multiseed_model_a model_b=outputs/multiseed_model_b \
+  --outdir outputs/model_comparison
+```
+
 ### 4) Remove split randomness for publication (recommended)
 Use a fixed official split:
 
@@ -227,6 +258,12 @@ In `outputs/main`:
 - `selected_thresholds.json`
 - `summary.md`
 - `decisions_<policy>.csv`
+
+In `outputs/multiseed_model_x/report`:
+- `results_section.md`
+- `model_policy_summary.csv`
+- `utility_coverage_curve.csv`
+- `utility_coverage_curve.png`
 
 ## Google Colab
 For heavy runs, use the notebook-style guide:

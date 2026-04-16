@@ -28,6 +28,7 @@ from deferralx.real_data import (
     collect_real_records,
     load_question_records,
 )
+from deferralx.reporting import compare_models, report_multiseed
 from deferralx.schema import load_records, stratified_split
 from deferralx.synthetic import generate_synthetic_csv
 from deferralx.utility import load_utility_config
@@ -160,6 +161,34 @@ def main() -> None:
     multi.add_argument("--bootstrap", type=int, default=120)
     multi.add_argument("--auto-generate", action="store_true")
     multi.add_argument("--auto-generate-n", type=int, default=6000)
+
+    report = sub.add_parser(
+        "report-multiseed",
+        help="Generate publication-ready multi-seed report artifacts",
+    )
+    report.add_argument("--multiseed-dir", required=True)
+    report.add_argument(
+        "--outdir",
+        default="",
+        help="Where to write report files (default: <multiseed-dir>/report)",
+    )
+    report.add_argument(
+        "--label",
+        default="",
+        help="Run label used in report text/plots (default: directory name)",
+    )
+
+    compare = sub.add_parser(
+        "compare-models",
+        help="Compare multiple model runs from their multiseed output folders",
+    )
+    compare.add_argument(
+        "--runs",
+        nargs="+",
+        required=True,
+        help="List of label=path entries, e.g. small=outputs/multiseed_small strong=outputs/multiseed_strong",
+    )
+    compare.add_argument("--outdir", default="outputs/model_comparison")
 
     args = parser.parse_args()
 
@@ -296,6 +325,40 @@ def main() -> None:
         print(json.dumps(readiness, indent=2))
         if args.fail_if_not_ready and not readiness["ready"]:
             sys.exit(2)
+        return
+
+    if args.cmd == "report-multiseed":
+        multiseed_dir = Path(args.multiseed_dir)
+        label = args.label.strip() if args.label.strip() else multiseed_dir.name
+        outdir = args.outdir.strip() if args.outdir.strip() else str(multiseed_dir / "report")
+        outputs = report_multiseed(
+            multiseed_dir=multiseed_dir,
+            outdir=outdir,
+            label=label,
+        )
+        print(json.dumps(outputs, indent=2))
+        return
+
+    if args.cmd == "compare-models":
+        parsed_runs: list[tuple[str, str]] = []
+        for value in args.runs:
+            if "=" not in value:
+                raise ValueError(
+                    f"Invalid --runs value: {value!r}. Expected format label=path."
+                )
+            label, path = value.split("=", 1)
+            label = label.strip()
+            path = path.strip()
+            if not label or not path:
+                raise ValueError(
+                    f"Invalid --runs value: {value!r}. Expected non-empty label and path."
+                )
+            parsed_runs.append((label, path))
+        outputs = compare_models(
+            runs=parsed_runs,
+            outdir=args.outdir,
+        )
+        print(json.dumps(outputs, indent=2))
         return
 
     input_path = Path(args.input)
