@@ -23,11 +23,13 @@ This guide runs the full DeferralX pipeline on Colab with a small Hugging Face L
   --dataset cais/mmlu \
   --subset all \
   --split test \
-  --output data/mmlu_questions_500.csv \
+  --output data/mmlu_questions_600.csv \
   --question-col question \
   --choices-col choices \
   --answer-col answer \
   --answer-is-index \
+  --shuffle \
+  --sample-seed 42 \
   --domain general \
   --domain-mode mmlu_subject \
   --profile-mode cycle \
@@ -37,45 +39,54 @@ This guide runs the full DeferralX pipeline on Colab with a small Hugging Face L
 
 ## 4) Collect local-HF logs
 ```bash
-!PYTHONPATH=src python -m deferralx.run collect-local-hf \
+!PYTHONPATH=src python -m deferralx.run collect-local-hf-batched \
   --questions data/mmlu_questions_600.csv \
-  --output data/real_llm_logs_local.csv \
-  --audit-jsonl outputs/audit/real_collection_local_hf.jsonl \
-  --model-id Qwen/Qwen2.5-0.5B-Instruct \
+  --output data/real_llm_logs_local_v2.csv \
+  --audit-jsonl outputs/audit/real_collection_local_hf_v2.jsonl \
+  --model-id Qwen/Qwen2.5-1.5B-Instruct \
   --device auto \
   --agreement-samples 1 \
   --skip-confidence-pass \
-  --max-tokens 96 \
-  --resume \
-  --max-examples 100
+  --max-tokens 12 \
+  --batch-size 100
 ```
 
-## 5) Evaluate routing policies
+## 5) Validate collection before evaluation
+```bash
+!PYTHONPATH=src python -m deferralx.run inspect-input \
+  --input data/real_llm_logs_local_v2.csv \
+  --questions data/mmlu_questions_600.csv \
+  --min-rows 600 \
+  --min-domains 3 \
+  --min-profiles 3 \
+  --fail-if-not-ready
+```
+
+## 6) Evaluate routing policies
 ```bash
 !PYTHONPATH=src python -m deferralx.run run \
-  --input data/real_llm_logs_local.csv \
-  --outdir outputs/main_colab \
+  --input data/real_llm_logs_local_v2.csv \
+  --outdir outputs/main_colab_v2 \
   --utility-config configs/utility_config.json \
   --test-ratio 0.30 \
   --seed 42 \
   --bootstrap 200
 ```
 
-## 6) View results
+## 7) View results
 ```bash
-!cat outputs/main_colab/summary.md
-!head -n 20 outputs/main_colab/metrics_overall.csv
+!cat outputs/main_colab_v2/summary.md
+!head -n 20 outputs/main_colab_v2/metrics_overall.csv
 ```
 
-## 7) Optional: export artifacts
+## 8) Optional: export artifacts
 ```bash
 from google.colab import files
-files.download('outputs/main_colab/summary.md')
-files.download('outputs/main_colab/metrics_overall.csv')
+files.download('outputs/main_colab_v2/summary.md')
+files.download('outputs/main_colab_v2/metrics_overall.csv')
 ```
 
 ## Notes
 - Start with `--limit 200` or `--limit 500`, then scale up.
 - For finance/medical experiments, repeat with FinanceBench and MedQA datasets and merge question files.
-- If a Colab session disconnects, re-run the same collect command with `--resume` to continue from where it stopped.
-- If `--max-examples 100` is used, rerun the same collect cell until it prints `No remaining questions to process.`
+- If a Colab session disconnects, re-run the same batched collect command; it resumes automatically.

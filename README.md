@@ -152,7 +152,7 @@ PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
 Fast + interruption-safe variant (recommended):
 
 ```bash
-PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
+PYTHONPATH=src python3 -m deferralx.run collect-local-hf-batched \
   --questions data/mmlu_questions.csv \
   --output data/real_llm_logs_local.csv \
   --audit-jsonl outputs/audit/real_collection_local_hf.jsonl \
@@ -161,17 +161,29 @@ PYTHONPATH=src python3 -m deferralx.run collect-local-hf \
   --agreement-samples 1 \
   --skip-confidence-pass \
   --max-tokens 12 \
-  --resume \
-  --max-examples 100
+  --batch-size 100
 ```
 
-If a run stops mid-way, rerun the exact same command with `--resume`.
+If a run stops mid-way, rerun the exact same command. It resumes automatically based on already collected `example_id`s.
 
 CPU-friendly model suggestions:
 - `Qwen/Qwen2.5-0.5B-Instruct`
 - `TinyLlama/TinyLlama-1.1B-Chat-v1.0`
 
 ### 3) Evaluate routing policies
+Validate that collection is complete before evaluation:
+
+```bash
+PYTHONPATH=src python3 -m deferralx.run inspect-input \
+  --input data/real_llm_logs_local.csv \
+  --questions data/mmlu_questions.csv \
+  --min-rows 600 \
+  --min-domains 3 \
+  --min-profiles 3 \
+  --fail-if-not-ready
+```
+
+Then run evaluation:
 
 ```bash
 PYTHONPATH=src python3 -m deferralx.run run \

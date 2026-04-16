@@ -1,0 +1,17 @@
+{
+  "global_threshold": 0.58,
+  "domain_threshold": {
+    "general": 0.58
+  },
+  "profile_threshold": {
+    "expert_fast": 0.51,
+    "balanced_user": 0.58,
+    "cautious_novice": 0.43
+  },
+  "domain_profile_threshold": {
+    "general::expert_fast": 0.51,
+    "general::balanced_user": 0.58,
+    "general::cautious_novice": 0.43
+  },
+  "rtr_style_threshold_router": 0.49
+}

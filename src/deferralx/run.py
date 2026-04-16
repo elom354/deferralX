@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -107,6 +108,49 @@ def main() -> None:
         default="You are a precise assistant. Provide your best concise answer.",
     )
 
+    local_hf_batched = sub.add_parser(
+        "collect-local-hf-batched",
+        help="Collect local HF logs in batches until all questions are processed",
+    )
+    local_hf_batched.add_argument("--questions", required=True)
+    local_hf_batched.add_argument("--output", default="data/real_llm_logs_local.csv")
+    local_hf_batched.add_argument(
+        "--audit-jsonl", default="outputs/audit/real_collection_local_hf.jsonl"
+    )
+    local_hf_batched.add_argument(
+        "--model-id",
+        default="Qwen/Qwen2.5-0.5B-Instruct",
+        help="Hugging Face model id or local path",
+    )
+    local_hf_batched.add_argument(
+        "--device",
+        default="auto",
+        help="auto|cpu|mps|cuda",
+    )
+    local_hf_batched.add_argument("--use-fp16", action="store_true")
+    local_hf_batched.add_argument("--max-tokens", type=int, default=256)
+    local_hf_batched.add_argument("--agreement-samples", type=int, default=3)
+    local_hf_batched.add_argument("--agreement-temperature", type=float, default=0.7)
+    local_hf_batched.add_argument("--fast-latency-s", type=float, default=4.0)
+    local_hf_batched.add_argument("--batch-size", type=int, default=100)
+    local_hf_batched.add_argument("--max-batches", type=int, default=0)
+    local_hf_batched.add_argument("--skip-confidence-pass", action="store_true")
+    local_hf_batched.add_argument(
+        "--system-prompt",
+        default="You are a precise assistant. Provide your best concise answer.",
+    )
+
+    inspect = sub.add_parser(
+        "inspect-input",
+        help="Inspect collected logs and validate readiness for evaluation",
+    )
+    inspect.add_argument("--input", required=True)
+    inspect.add_argument("--questions", default="")
+    inspect.add_argument("--min-rows", type=int, default=300)
+    inspect.add_argument("--min-domains", type=int, default=3)
+    inspect.add_argument("--min-profiles", type=int, default=3)
+    inspect.add_argument("--fail-if-not-ready", action="store_true")
+
     multi = sub.add_parser("run-multiseed", help="Run experiments for multiple seeds")
     multi.add_argument("--input", default="data/synthetic_llm_logs.csv")
     multi.add_argument("--outdir", default="outputs/multiseed")
@@ -188,6 +232,70 @@ def main() -> None:
             use_confidence_pass=(not args.skip_confidence_pass),
         )
         print(f"Local HF LLM records written to: {args.output}")
+        return
+
+    if args.cmd == "collect-local-hf-batched":
+        if args.batch_size <= 0:
+            raise ValueError("--batch-size must be > 0")
+        if args.max_batches < 0:
+            raise ValueError("--max-batches must be >= 0")
+
+        all_questions = load_question_records(args.questions)
+        client = build_local_hf_client(
+            model_id_or_path=args.model_id,
+            device=args.device,
+            use_fp16=args.use_fp16,
+        )
+
+        batches_run = 0
+        while True:
+            done_ids = _read_existing_example_ids(args.output)
+            remaining = [q for q in all_questions if q.example_id not in done_ids]
+            if not remaining:
+                print("No remaining questions to process.")
+                break
+
+            if args.max_batches > 0 and batches_run >= args.max_batches:
+                print(f"Reached max batches: {args.max_batches}")
+                break
+
+            batch = remaining[: args.batch_size]
+            print(
+                f"Batch {batches_run + 1}: processing {len(batch)} questions "
+                f"({len(remaining)} remaining before batch)."
+            )
+
+            collect_real_records(
+                questions=batch,
+                client=client,
+                model=args.model_id,
+                max_tokens=args.max_tokens,
+                agreement_samples=args.agreement_samples,
+                agreement_temperature=args.agreement_temperature,
+                fast_latency_s=args.fast_latency_s,
+                system_prompt=args.system_prompt,
+                audit_path=args.audit_jsonl,
+                output_path=args.output,
+                append_output=True,
+                use_confidence_pass=(not args.skip_confidence_pass),
+            )
+            batches_run += 1
+
+        total_done = len(_read_existing_example_ids(args.output))
+        print(f"Local HF batched collection done. Processed rows in output: {total_done}")
+        return
+
+    if args.cmd == "inspect-input":
+        readiness = inspect_input(
+            input_path=args.input,
+            questions_path=args.questions.strip(),
+            min_rows=args.min_rows,
+            min_domains=args.min_domains,
+            min_profiles=args.min_profiles,
+        )
+        print(json.dumps(readiness, indent=2))
+        if args.fail_if_not_ready and not readiness["ready"]:
+            sys.exit(2)
         return
 
     input_path = Path(args.input)
@@ -577,6 +685,78 @@ def _std(values: list[float]) -> float:
     mean = _mean(values)
     variance = sum((x - mean) * (x - mean) for x in values) / (len(values) - 1)
     return variance ** 0.5
+
+
+def inspect_input(
+    input_path: str,
+    questions_path: str = "",
+    min_rows: int = 300,
+    min_domains: int = 3,
+    min_profiles: int = 3,
+) -> dict:
+    records = load_records(input_path)
+
+    domain_counts: dict[str, int] = defaultdict(int)
+    profile_counts: dict[str, int] = defaultdict(int)
+    severe_counts: dict[int, int] = defaultdict(int)
+    correctness_sum = 0
+    p_internal_sum = 0.0
+    p_verbal_sum = 0.0
+    agreement_sum = 0.0
+    ids: set[str] = set()
+
+    for r in records:
+        ids.add(r.example_id)
+        domain_counts[r.domain] += 1
+        profile_counts[r.user_profile] += 1
+        severe_counts[r.severe_if_wrong] += 1
+        correctness_sum += int(r.correctness)
+        p_internal_sum += float(r.p_internal)
+        p_verbal_sum += float(r.p_verbal)
+        agreement_sum += float(r.agreement)
+
+    n = len(records)
+    summary = {
+        "rows": n,
+        "accuracy": (correctness_sum / n) if n else 0.0,
+        "mean_p_internal": (p_internal_sum / n) if n else 0.0,
+        "mean_p_verbal": (p_verbal_sum / n) if n else 0.0,
+        "mean_agreement": (agreement_sum / n) if n else 0.0,
+        "domain_counts": dict(sorted(domain_counts.items())),
+        "profile_counts": dict(sorted(profile_counts.items())),
+        "severe_counts": dict(sorted(severe_counts.items())),
+    }
+
+    coverage = {}
+    if questions_path:
+        questions = load_question_records(questions_path)
+        q_ids = {q.example_id for q in questions}
+        missing = sorted(q_ids - ids)
+        coverage = {
+            "question_rows": len(questions),
+            "collected_rows": len(ids),
+            "missing_rows": len(missing),
+        }
+
+    ready = (
+        n >= min_rows
+        and len(domain_counts) >= min_domains
+        and len(profile_counts) >= min_profiles
+    )
+    if questions_path and coverage.get("missing_rows", 0) > 0:
+        ready = False
+
+    return {
+        "ready": ready,
+        "criteria": {
+            "min_rows": min_rows,
+            "min_domains": min_domains,
+            "min_profiles": min_profiles,
+            "require_full_question_coverage": bool(questions_path),
+        },
+        "summary": summary,
+        "coverage": coverage,
+    }
 
 
 if __name__ == "__main__":
